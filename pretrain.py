@@ -18,12 +18,25 @@ import coolname
 import hydra
 import pydantic
 from omegaconf import DictConfig
-from adam_atan2 import AdamATan2
+try:
+    from adam_atan2 import AdamATan2
+except Exception as e:
+    AdamATan2 = None
+    print(f"WARNING: adam_atan2 not available ({e}); falling back to torch.optim.AdamW")
 
 from puzzle_dataset import PuzzleDataset, PuzzleDatasetConfig, PuzzleDatasetMetadata
 from utils.functions import load_model_class, get_model_source_path
 from models.sparse_embedding import CastedSparseEmbeddingSignSGD_Distributed
 from models.ema import EMAHelper
+
+def make_adam_optimizer(params, *, lr: float, weight_decay: float, betas):
+    """Create AdamATan2 if available, otherwise fall back to torch.optim.AdamW.
+
+    This makes Colab runs robust when the adam_atan2 backend extension is not built.
+    """
+    if AdamATan2 is None:
+        return torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay, betas=betas)
+    return AdamATan2(params, lr=lr, weight_decay=weight_decay, betas=betas)
 
 
 class LossConfig(pydantic.BaseModel):
@@ -148,7 +161,7 @@ def create_model(config: PretrainConfig, train_metadata: PuzzleDatasetMetadata, 
     # Optimizers and lr
     if config.arch.puzzle_emb_ndim == 0:
         optimizers = [
-            AdamATan2(
+            make_adam_optimizer(
                 model.parameters(),
                 lr=0,  # Needs to be set by scheduler
                 weight_decay=config.weight_decay,
@@ -178,7 +191,7 @@ def create_model(config: PretrainConfig, train_metadata: PuzzleDatasetMetadata, 
                 weight_decay=config.puzzle_emb_weight_decay,
                 world_size=world_size
             ),
-            AdamATan2(
+            make_adam_optimizer(
                 model.parameters(),
                 lr=0,  # Needs to be set by scheduler
                 weight_decay=config.weight_decay,
