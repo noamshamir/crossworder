@@ -9,3 +9,5 @@ puz/
 checkpoints/
 nyt_puz_byweekday/
 nyt_puz_flat/
+__pycache__/
+*.pyc
