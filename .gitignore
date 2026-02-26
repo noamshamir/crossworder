@@ -1,0 +1,11 @@
+data/
+crosswords/
+puz/
+*.npy
+*.npz
+*.pkl
+*.pt
+*.puz
+checkpoints/
+nyt_puz_byweekday/
+nyt_puz_flat/

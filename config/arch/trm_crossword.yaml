@@ -1,0 +1,29 @@
+name: recursive_reasoning.trm_crossword@CrosswordTRM
+loss:
+  name: losses@ACTLossHead
+  loss_type: stablemax_cross_entropy
+
+halt_exploration_prob: 0.1
+halt_max_steps: 16
+
+H_cycles: 3
+L_cycles: 6
+
+H_layers: 0
+L_layers: 2
+
+hidden_size: 512
+num_heads: 8
+expansion: 4
+
+puzzle_emb_ndim: 0   # disabled — clue embeddings replace puzzle_emb
+puzzle_emb_len: 0
+
+pos_encodings: rope
+forward_dtype: bfloat16
+
+mlp_t: False
+no_ACT_continue: True
+
+# Crossword-specific
+clue_emb_dim: 384    # matches all-MiniLM-L6-v2 output dim
