@@ -254,27 +254,47 @@ def save_train_state(config: PretrainConfig, train_state: TrainState):
     os.makedirs(config.checkpoint_path, exist_ok=True)
     torch.save(train_state.model.state_dict(), os.path.join(config.checkpoint_path, f"step_{train_state.step}"))
 
-
 def load_checkpoint(model: nn.Module, config: PretrainConfig):
-    if config.load_checkpoint is not None:
-        print(f"Loading checkpoint {config.load_checkpoint}")
+    if config.load_checkpoint is None:
+        return
 
-        # Load state dict
-        state_dict = torch.load(config.load_checkpoint, map_location="cuda")
+    print(f"Loading checkpoint {config.load_checkpoint}")
+    state_dict = torch.load(config.load_checkpoint, map_location="cuda")
 
-        # Resize and reset puzzle emb if needed
-        puzzle_emb_name = "_orig_mod.model.inner.puzzle_emb.weights"
-        expected_shape: torch.Size = model.model.puzzle_emb.weights.shape  # type: ignore
-        if puzzle_emb_name in state_dict:
-            puzzle_emb = state_dict[puzzle_emb_name]
-            if puzzle_emb.shape != expected_shape:
-                print(f"Resetting puzzle embedding as shape is different. Found {puzzle_emb.shape}, Expected {expected_shape}")
-                # Re-initialize using mean
-                state_dict[puzzle_emb_name] = (
-                    torch.mean(puzzle_emb, dim=0, keepdim=True).expand(expected_shape).contiguous()
-                )
-        model.load_state_dict(state_dict, assign=True)
+    # Check whether this model actually has puzzle_emb.weights
+    has_puzzle_emb = (
+        hasattr(model, "model")
+        and hasattr(model.model, "puzzle_emb")  # type: ignore
+        and hasattr(model.model.puzzle_emb, "weights")  # type: ignore
+    )
 
+    if not has_puzzle_emb:
+        # Drop any puzzle_emb keys from checkpoint, then load the rest
+        drop_keys = [k for k in list(state_dict.keys()) if "puzzle_emb" in k]
+        if drop_keys:
+            print(f"Checkpoint contains puzzle_emb but model doesn't; dropping {len(drop_keys)} keys.")
+            for k in drop_keys:
+                state_dict.pop(k, None)
+
+        model.load_state_dict(state_dict, strict=False, assign=True)
+        return
+
+    # Resize/reset puzzle emb if present and shape differs
+    expected_shape: torch.Size = model.model.puzzle_emb.weights.shape  # type: ignore
+
+    # Your old key was hardcoded; make it robust to different prefixes
+    candidate_keys = [k for k in state_dict.keys() if k.endswith("puzzle_emb.weights")]
+    for k in candidate_keys:
+        puzzle_emb = state_dict[k]
+        if hasattr(puzzle_emb, "shape") and puzzle_emb.shape != expected_shape:
+            print(f"Resetting puzzle embedding for {k}. Found {puzzle_emb.shape}, Expected {expected_shape}")
+            state_dict[k] = (
+                torch.mean(puzzle_emb, dim=0, keepdim=True)
+                .expand(expected_shape)
+                .contiguous()
+            )
+
+    model.load_state_dict(state_dict, strict=False, assign=True)
 
 def compute_lr(base_lr: float, config: PretrainConfig, train_state: TrainState):
     return cosine_schedule_with_warmup_lr_lambda(
