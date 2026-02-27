@@ -127,9 +127,20 @@ class Attention(nn.Module):
             cos, sin = cos_sin
             query, key = apply_rotary_pos_emb(query, key, cos, sin)
 
-        # flash attn
-        query, key, value = map(lambda t: einops.rearrange(t, 'B S H D -> B H S D'), (query, key, value)) # needed for scaled_dot_product_attention but not flash_attn_func
-        attn_output = scaled_dot_product_attention(query=query, key=key, value=value, is_causal=self.causal)
+        # SDPA (will use FlashAttention / mem-efficient kernels on supported GPUs)
+        query, key, value = map(lambda t: einops.rearrange(t, 'B S H D -> B H S D'), (query, key, value))
+
+        # Prefer Flash / mem-efficient SDPA kernels when available (e.g., H100)
+        if query.is_cuda and hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "sdp_kernel"):
+            try:
+                with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_mem_efficient=True, enable_math=False):
+                    attn_output = scaled_dot_product_attention(query=query, key=key, value=value, is_causal=self.causal)
+            except Exception:
+                # Fallback (PyTorch will choose an available kernel)
+                attn_output = scaled_dot_product_attention(query=query, key=key, value=value, is_causal=self.causal)
+        else:
+            attn_output = scaled_dot_product_attention(query=query, key=key, value=value, is_causal=self.causal)
+
         attn_output = einops.rearrange(attn_output, 'B H S D -> B S H D')
         attn_output = attn_output.reshape(batch_size, seq_len, self.output_size)  # type: ignore
         return self.o_proj(attn_output)

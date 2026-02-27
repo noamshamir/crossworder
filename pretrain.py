@@ -116,13 +116,18 @@ def create_dataloader(config: PretrainConfig, split: str, rank: int, world_size:
         num_replicas=world_size,
         **kwargs
     ), split=split)
+    # Try to keep the GPU fed; Colab/remote runtimes often benefit from >1 worker.
+    # Cap to avoid runaway RAM usage.
+    cpu_count = os.cpu_count() or 4
+    num_workers = max(2, min(8, cpu_count // 2))
+
     dataloader = DataLoader(
         dataset,
         batch_size=None,
-        num_workers=1,
-        prefetch_factor=8,
+        num_workers=num_workers,
+        prefetch_factor=4,
         pin_memory=True,
-        persistent_workers=True
+        persistent_workers=(num_workers > 0),
     )
     return dataloader, dataset.metadata
 
@@ -333,8 +338,11 @@ def train_batch(config: PretrainConfig, train_state: TrainState, batch: Any, glo
         with torch.device("cuda"):
             train_state.carry = train_state.model.initial_carry(batch)  # type: ignore
 
-    # Forward
-    train_state.carry, loss, metrics, _, _ = train_state.model(carry=train_state.carry, batch=batch, return_keys=[])
+    # Forward (bf16 autocast for speed; keep backward in fp32 as usual)
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        train_state.carry, loss, metrics, _, _ = train_state.model(
+            carry=train_state.carry, batch=batch, return_keys=[]
+        )
 
     ((1 / global_batch_size) * loss).backward()
 
@@ -418,9 +426,10 @@ def evaluate(
             # Forward
             inference_steps = 0
             while True:
-                carry, loss, metrics, preds, all_finish = train_state.model(
-                    carry=carry, batch=batch, return_keys=return_keys
-                )
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    carry, loss, metrics, preds, all_finish = train_state.model(
+                        carry=carry, batch=batch, return_keys=return_keys
+                    )
                 inference_steps += 1
 
                 if all_finish:
@@ -712,6 +721,13 @@ def launch(hydra_config: DictConfig):
 
     # Seed RNGs to ensure consistency
     torch.random.manual_seed(config.seed + RANK)
+    # Performance knobs (safe on Ampere+; especially beneficial on H100)
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    try:
+        torch.set_float32_matmul_precision("high")
+    except Exception:
+        pass
 
     # Dataset
     train_epochs_per_iter = config.eval_interval if config.eval_interval is not None else config.epochs
@@ -776,8 +792,15 @@ def launch(hydra_config: DictConfig):
                 print("EVALUATE")
             if config.ema:
                 print("SWITCH TO EMA")
-                train_state_eval = copy.deepcopy(train_state)
-                train_state_eval.model = ema_helper.ema_copy(train_state_eval.model)
+                ema_model = ema_helper.ema_copy(train_state.model)
+                train_state_eval = TrainState(
+                    model=ema_model,
+                    optimizers=train_state.optimizers,
+                    optimizer_lrs=train_state.optimizer_lrs,
+                    carry=None,
+                    step=train_state.step,
+                    total_steps=train_state.total_steps,
+                )
             else:
                 train_state_eval = train_state
             train_state_eval.model.eval()

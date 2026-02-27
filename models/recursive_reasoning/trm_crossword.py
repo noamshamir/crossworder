@@ -126,8 +126,12 @@ class CrosswordTRM_Block(nn.Module):
             hidden_states = rms_norm(hidden_states + out, variance_epsilon=self.norm_eps)
             hidden_states = hidden_states.transpose(1, 2)
         else:
+            # Attention uses PyTorch SDPA under the hood (see models/layers.py).
+            # On H100/bf16 this will automatically use FlashAttention when supported.
+            attn_out = self.self_attn(cos_sin=cos_sin, hidden_states=hidden_states)
+
             hidden_states = rms_norm(
-                hidden_states + self.self_attn(cos_sin=cos_sin, hidden_states=hidden_states),
+                hidden_states + attn_out,
                 variance_epsilon=self.norm_eps,
             )
         out = self.mlp(hidden_states)
