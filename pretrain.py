@@ -124,8 +124,7 @@ def create_dataloader(config: PretrainConfig, split: str, rank: int, world_size:
     dataloader = DataLoader(
         dataset,
         batch_size=None,
-        num_workers=num_workers,
-        prefetch_factor=4,
+        num_workers=1,
         pin_memory=True,
         persistent_workers=1
     )
