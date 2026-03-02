@@ -7,6 +7,8 @@ import shutil
 import copy
 import time
 
+import numpy as np
+
 import torch
 import torch.distributed as dist
 from torch import nn
@@ -232,9 +234,35 @@ def cosine_schedule_with_warmup_lr_lambda(
     return base_lr * (min_ratio + max(0.0, (1 - min_ratio) * 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress))))
 
 
+def _estimate_total_examples(config: PretrainConfig, train_metadata: PuzzleDatasetMetadata) -> int:
+    """Estimate total number of training examples from dataset files.
+
+    Older crossword datasets set mean_puzzle_examples=1 even when using heavy
+    augmentation. To keep total_steps accurate (and avoid stopping training
+    after only a few hundred updates), we infer the true example count from
+    the saved all__inputs.npy arrays when available.
+    """
+    total_examples = 0
+    for dataset_path in config.data_paths:
+        inputs_path = os.path.join(dataset_path, "train", "all__inputs.npy")
+        if os.path.exists(inputs_path):
+            try:
+                arr = np.load(inputs_path, mmap_mode="r")
+                total_examples += int(arr.shape[0])
+            except Exception:
+                pass
+
+    if total_examples == 0:
+        # Fallback to metadata-based estimate
+        total_examples = int(train_metadata.total_groups * max(1.0, train_metadata.mean_puzzle_examples))
+
+    return max(total_examples, 1)
+
+
 def init_train_state(config: PretrainConfig, train_metadata: PuzzleDatasetMetadata, rank: int, world_size: int):
-    # Estimated total training steps
-    total_steps = int(config.epochs * train_metadata.total_groups * train_metadata.mean_puzzle_examples / config.global_batch_size)
+    # Estimated total training steps based on true example count
+    total_examples = _estimate_total_examples(config, train_metadata)
+    total_steps = int(math.ceil(config.epochs * total_examples / config.global_batch_size))
 
     # Model
     model, optimizers, optimizer_lrs = create_model(config, train_metadata, rank=rank, world_size=world_size)
