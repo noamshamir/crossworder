@@ -778,6 +778,8 @@ def launch(hydra_config: DictConfig):
         if RANK == 0:
             print("TRAIN")
         train_state.model.train()
+        epoch_metrics_accum = {}
+        epoch_batch_count = 0
         for set_name, batch, global_batch_size in train_loader:
             metrics = train_batch(config, train_state, batch, global_batch_size, rank=RANK, world_size=WORLD_SIZE)
 
@@ -785,8 +787,25 @@ def launch(hydra_config: DictConfig):
                 wandb.log(metrics, step=train_state.step)
                 progress_bar.update(train_state.step - progress_bar.n)  # type: ignore
                 train_history.append(metrics)
+                # Accumulate for epoch summary
+                epoch_batch_count += 1
+                for k, v in metrics.items():
+                    if isinstance(v, (int, float)):
+                        epoch_metrics_accum[k] = epoch_metrics_accum.get(k, 0) + v
             if config.ema:
                 ema_helper.update(train_state.model)
+
+        # Print epoch summary
+        if RANK == 0 and epoch_batch_count > 0:
+            epoch_num = (_iter_id + 1) * train_epochs_per_iter
+            avg_metrics = {k: v / epoch_batch_count for k, v in epoch_metrics_accum.items()}
+            summary_parts = [f"Epoch {epoch_num}/{config.epochs}  step={train_state.step}"]
+            for k in ["train/lm_loss", "train/accuracy", "train/exact_accuracy", "train/q_halt_loss", "train/steps"]:
+                if k in avg_metrics:
+                    summary_parts.append(f"{k.split('/')[-1]}={avg_metrics[k]:.4f}")
+            if "train/lr" in avg_metrics:
+                summary_parts.append(f"lr={avg_metrics['train/lr']:.2e}")
+            print("  >>> " + "  |  ".join(summary_parts))
 
         if _iter_id >= config.min_eval_interval:
             ############ Evaluation
