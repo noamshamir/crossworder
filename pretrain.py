@@ -338,8 +338,9 @@ def train_batch(config: PretrainConfig, train_state: TrainState, batch: Any, glo
         with torch.device("cuda"):
             train_state.carry = train_state.model.initial_carry(batch)  # type: ignore
 
-    # Forward (bf16 autocast for speed; keep backward in fp32 as usual)
-    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+    # Forward (fp16 autocast for speed; keep backward in fp32 as usual)
+    #with torch.autocast(device_type="cuda", dtype=torch.bfloat16):  # H100
+    with torch.autocast(device_type="cuda", dtype=torch.float16):    # T4
         train_state.carry, loss, metrics, _, _ = train_state.model(
             carry=train_state.carry, batch=batch, return_keys=[]
         )
@@ -426,7 +427,8 @@ def evaluate(
             # Forward
             inference_steps = 0
             while True:
-                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                #with torch.autocast(device_type="cuda", dtype=torch.bfloat16):  # H100
+                with torch.autocast(device_type="cuda", dtype=torch.float16):    # T4
                     carry, loss, metrics, preds, all_finish = train_state.model(
                         carry=carry, batch=batch, return_keys=return_keys
                     )

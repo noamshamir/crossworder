@@ -20,7 +20,8 @@ puzzle_emb_ndim: 0 # disabled — clue embeddings replace puzzle_emb
 puzzle_emb_len: 0
 
 pos_encodings: rope
-forward_dtype: bfloat16
+#forward_dtype: bfloat16  # H100
+forward_dtype: float16 # T4
 
 mlp_t: False
 no_ACT_continue: True
