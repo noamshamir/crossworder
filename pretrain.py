@@ -118,17 +118,12 @@ def create_dataloader(config: PretrainConfig, split: str, rank: int, world_size:
         num_replicas=world_size,
         **kwargs
     ), split=split)
-    # Try to keep the GPU fed; Colab/remote runtimes often benefit from >1 worker.
-    # Cap to avoid runaway RAM usage.
-    cpu_count = os.cpu_count() or 4
-    num_workers = max(2, min(8, cpu_count // 2))
 
     dataloader = DataLoader(
         dataset,
         batch_size=None,
-        num_workers=1,
+        num_workers=0,
         pin_memory=True,
-        persistent_workers=1
     )
     return dataloader, dataset.metadata
 
