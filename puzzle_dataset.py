@@ -268,7 +268,6 @@ class PuzzleDataset(IterableDataset):
                         dataset, batch_indices
                     )
                 batch = self._collate_batch(batch_dict)
-                batch = self._collate_batch(batch_dict)
 
                 yield set_name, batch, global_effective_batch_size
                 

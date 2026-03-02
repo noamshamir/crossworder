@@ -127,7 +127,7 @@ def create_dataloader(config: PretrainConfig, split: str, rank: int, world_size:
         num_workers=num_workers,
         prefetch_factor=4,
         pin_memory=True,
-        persistent_workers=(num_workers > 0),
+        persistent_workers=1
     )
     return dataloader, dataset.metadata
 

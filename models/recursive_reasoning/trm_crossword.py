@@ -84,6 +84,10 @@ class CrosswordTRM_Config(BaseModel):
     # ---- Crossword-specific ----
     clue_emb_dim: int = 384  # dimension of pre-computed clue embeddings
 
+    # ---- Regularization ----
+    dropout_rate: float = 0.0        # dropout on attention output + MLP output
+    clue_dropout_rate: float = 0.0   # probability of zeroing the entire clue embedding for a cell
+
 
 # ---------------------------------------------------------------------------
 # Blocks (reused from base TRM logic)
@@ -118,12 +122,13 @@ class CrosswordTRM_Block(nn.Module):
             expansion=config.expansion,
         )
         self.norm_eps = config.rms_norm_eps
+        self.dropout = nn.Dropout(config.dropout_rate) if config.dropout_rate > 0 else nn.Identity()
 
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
         if self.config.mlp_t:
             hidden_states = hidden_states.transpose(1, 2)
             out = self.mlp_t(hidden_states)
-            hidden_states = rms_norm(hidden_states + out, variance_epsilon=self.norm_eps)
+            hidden_states = rms_norm(hidden_states + self.dropout(out), variance_epsilon=self.norm_eps)
             hidden_states = hidden_states.transpose(1, 2)
         else:
             # Attention uses PyTorch SDPA under the hood (see models/layers.py).
@@ -131,11 +136,11 @@ class CrosswordTRM_Block(nn.Module):
             attn_out = self.self_attn(cos_sin=cos_sin, hidden_states=hidden_states)
 
             hidden_states = rms_norm(
-                hidden_states + attn_out,
+                hidden_states + self.dropout(attn_out),
                 variance_epsilon=self.norm_eps,
             )
         out = self.mlp(hidden_states)
-        hidden_states = rms_norm(hidden_states + out, variance_epsilon=self.norm_eps)
+        hidden_states = rms_norm(hidden_states + self.dropout(out), variance_epsilon=self.norm_eps)
         return hidden_states
 
 
@@ -179,6 +184,7 @@ class CrosswordTRM_Inner(nn.Module):
 
         # ---- Clue embedding projection ----
         self.clue_proj = CastedLinear(self.config.clue_emb_dim, self.config.hidden_size, bias=False)
+        self.clue_dropout = nn.Dropout(self.config.clue_dropout_rate) if self.config.clue_dropout_rate > 0 else nn.Identity()
 
         # ---- Puzzle embedding (optional, usually disabled for crosswords) ----
         self.puzzle_emb_len = (
@@ -240,9 +246,10 @@ class CrosswordTRM_Inner(nn.Module):
         # Token embedding
         embedding = self.embed_tokens(input_ids.to(torch.int32))
 
-        # Inject clue embeddings
+        # Inject clue embeddings (with optional dropout for regularization)
         if clue_embeddings is not None:
             clue_proj = self.clue_proj(clue_embeddings.to(self.forward_dtype))
+            clue_proj = self.clue_dropout(clue_proj)
             embedding = embedding + clue_proj
 
         # Puzzle embeddings (optional)

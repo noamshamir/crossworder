@@ -242,6 +242,7 @@ def build_grid_arrays(
         reveal_indices = rng.choice(white_cells, size=num_reveal, replace=False)
         for idx in reveal_indices:
             input_arr[idx] = label_arr[idx]  # copy letter token into input
+            label_arr[idx] = 0               # mask from loss — no free credit
 
     return input_arr, label_arr
 
